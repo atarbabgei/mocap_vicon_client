@@ -18,7 +18,7 @@ class Communicator : public rclcpp::Node
 {
 private:
     ViconDataStreamSDK::CPP::Client vicon_client;
-    string hostname;
+    string server;
     unsigned int buffer_size;
     string ns_name;
     map<string, Publisher> pub_map;

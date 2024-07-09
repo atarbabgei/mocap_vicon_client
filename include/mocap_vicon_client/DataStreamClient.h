@@ -194,7 +194,7 @@ namespace CPP
     ///      Output_Connect Output = MyClient.Connect("localhost:801");
     /// -----
     /// 
-    /// \param  HostName The DNS-identifiable name, or IP address of the PC hosting the DataStream server. 
+    /// \param  server The DNS-identifiable name, or IP address of the PC hosting the DataStream server. 
     ///                  For example:
     ///                    + "localhost"
     ///                    + "MyViconPC:801"
@@ -202,10 +202,10 @@ namespace CPP
     /// \return An Output_Connect class containing the result of the connect operation.
     ///         - The Result will be: 
     ///           + Success
-    ///           + InvalidHostName
+    ///           + Invalidserver
     ///           + ClientAlreadyConnected 
     ///           + ClientConnectionFailed
-    Output_Connect Connect( const String & HostName );
+    Output_Connect Connect( const String & server );
 
     /// Connect to a Vicon DataStream Server's Multicast stream. 
     /// The stream content is managed by a client who calls StartTransmittingMulticast().
@@ -256,7 +256,7 @@ namespace CPP
     /// \return An Output_ConnectToMulticast class containing the result of the connect operation.
     ///         - The Result will be: 
     ///           + Success
-    ///           + InvalidHostName
+    ///           + Invalidserver
     ///           + InvalidMulticastIP
     ///           + ClientAlreadyConnected 
     ///           + ClientConnectionFailed

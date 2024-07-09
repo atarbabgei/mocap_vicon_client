@@ -260,7 +260,7 @@ namespace Result
     Unknown, ///< The result is unknown. Treat it as a failure.
     NotImplemented, ///< The function called has not been implemented in this version of the SDK.
     Success, ///< The function call succeeded.
-    InvalidHostName, ///< The "HostName" parameter passed to Connect() is invalid.
+    Invalidserver, ///< The "server" parameter passed to Connect() is invalid.
     InvalidMulticastIP, ///< The "MulticastIP" parameter was not in the range "224.0.0.0" - "239.255.255.255"
     ClientAlreadyConnected, ///< Connect() was called whilst already connected to a DataStream.
     ClientConnectionFailed, ///< Connect() could not establish a connection to the DataStream server.

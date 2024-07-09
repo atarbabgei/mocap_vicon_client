@@ -5,10 +5,10 @@ using namespace ViconDataStreamSDK::CPP;
 Communicator::Communicator() : Node("vicon")
 {
     // get parameters
-    this->declare_parameter<std::string>("hostname", "127.0.0.1");
-    this->declare_parameter<int>("buffer_size", 200);
-    this->declare_parameter<std::string>("namespace", "vicon");
-    this->get_parameter("hostname", hostname);
+    this->declare_parameter<std::string>("server", "127.0.0.1");
+    this->declare_parameter<int>("buffer_size", 256);
+    this->declare_parameter<std::string>("namespace", "mocap");
+    this->get_parameter("server", server);
     this->get_parameter("buffer_size", buffer_size);
     this->get_parameter("namespace", ns_name);
 }
@@ -16,12 +16,12 @@ Communicator::Communicator() : Node("vicon")
 bool Communicator::connect()
 {
     // connect to server
-    string msg = "Connecting to " + hostname + " ...";
+    string msg = "Connecting to " + server + " ...";
     cout << msg << endl;
     int counter = 0;
     while (!vicon_client.IsConnected().Connected)
     {
-        bool ok = (vicon_client.Connect(hostname).Result == Result::Success);
+        bool ok = (vicon_client.Connect(server).Result == Result::Success);
         if (!ok)
         {
             counter++;
@@ -30,7 +30,7 @@ bool Communicator::connect()
             sleep(1);
         }
     }
-    msg = "Connection successfully established with " + hostname;
+    msg = "Connection successfully established with " + server;
     cout << msg << endl;
 
     // perform further initialization
@@ -60,7 +60,7 @@ bool Communicator::disconnect()
     vicon_client.DisableUnlabeledMarkerData();
     vicon_client.DisableDeviceData();
     vicon_client.DisableCentroidData();
-    string msg = "Disconnecting from " + hostname + "...";
+    string msg = "Disconnecting from " + server + "...";
     cout << msg << endl;
     vicon_client.Disconnect();
     msg = "Successfully disconnected";
