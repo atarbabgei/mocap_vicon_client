@@ -4,20 +4,33 @@ using namespace ViconDataStreamSDK::CPP;
 
 Communicator::Communicator() : Node("vicon")
 {
-    // get parameters
-    this->declare_parameter<std::string>("server", "127.0.0.1");
-    this->declare_parameter<int>("buffer_size", 256);
-    this->declare_parameter<std::string>("namespace", "mocap");
-    this->get_parameter("server", server);
-    this->get_parameter("buffer_size", buffer_size);
-    this->get_parameter("namespace", ns_name);
+    // Declare parameters without default values
+    this->declare_parameter<std::string>("server");
+    this->declare_parameter<int>("buffer_size");
+    this->declare_parameter<std::string>("namespace");
+
+    // Check if parameters are set
+    if (!this->get_parameter("server", server)) {
+        RCLCPP_ERROR(this->get_logger(), "Parameter 'server' is not set");
+        throw std::runtime_error("Parameter 'server' is not set");
+    }
+
+    if (!this->get_parameter("buffer_size", buffer_size)) {
+        RCLCPP_ERROR(this->get_logger(), "Parameter 'buffer_size' is not set");
+        throw std::runtime_error("Parameter 'buffer_size' is not set");
+    }
+
+    if (!this->get_parameter("namespace", ns_name)) {
+        RCLCPP_ERROR(this->get_logger(), "Parameter 'namespace' is not set");
+        throw std::runtime_error("Parameter 'namespace' is not set");
+    }
 }
 
 bool Communicator::connect()
 {
     // connect to server
-    string msg = "Connecting to " + server + " ...";
-    cout << msg << endl;
+    std::string msg = "Connecting to " + server + " ...";
+    std::cout << msg << std::endl;
     int counter = 0;
     while (!vicon_client.IsConnected().Connected)
     {
@@ -26,12 +39,12 @@ bool Communicator::connect()
         {
             counter++;
             msg = "Connect failed, reconnecting (" + std::to_string(counter) + ")...";
-            cout << msg << endl;
+            std::cout << msg << std::endl;
             sleep(1);
         }
     }
     msg = "Connection successfully established with " + server;
-    cout << msg << endl;
+    std::cout << msg << std::endl;
 
     // perform further initialization
     vicon_client.EnableSegmentData();
@@ -45,7 +58,7 @@ bool Communicator::connect()
     vicon_client.SetBufferSize(buffer_size);
 
     msg = "Initialization complete";
-    cout << msg << endl;
+    std::cout << msg << std::endl;
 
     return true;
 }
@@ -60,11 +73,11 @@ bool Communicator::disconnect()
     vicon_client.DisableUnlabeledMarkerData();
     vicon_client.DisableDeviceData();
     vicon_client.DisableCentroidData();
-    string msg = "Disconnecting from " + server + "...";
-    cout << msg << endl;
+    std::string msg = "Disconnecting from " + server + "...";
+    std::cout << msg << std::endl;
     vicon_client.Disconnect();
     msg = "Successfully disconnected";
-    cout << msg << endl;
+    std::cout << msg << std::endl;
     if (!vicon_client.IsConnected().Connected)
         return true;
     return false;
@@ -77,12 +90,12 @@ void Communicator::get_frame()
 
     unsigned int subject_count = vicon_client.GetSubjectCount().SubjectCount;
 
-    map<string, Publisher>::iterator pub_it;
+    std::map<std::string, Publisher>::iterator pub_it;
 
     for (unsigned int subject_index = 0; subject_index < subject_count; ++subject_index)
     {
         // get the subject name
-        string subject_name = vicon_client.GetSubjectName(subject_index).SubjectName;
+        std::string subject_name = vicon_client.GetSubjectName(subject_index).SubjectName;
 
         // count the number of segments
         unsigned int segment_count = vicon_client.GetSegmentCount(subject_name).SegmentCount;
@@ -90,7 +103,7 @@ void Communicator::get_frame()
         for (unsigned int segment_index = 0; segment_index < segment_count; ++segment_index)
         {
             // get the segment name
-            string segment_name = vicon_client.GetSegmentName(subject_name, segment_index).SegmentName;
+            std::string segment_name = vicon_client.GetSegmentName(subject_name, segment_index).SegmentName;
 
             // get position of segment
             PositionStruct current_position;
@@ -137,18 +150,18 @@ void Communicator::get_frame()
     }
 }
 
-void Communicator::create_publisher(const string subject_name, const string segment_name)
+void Communicator::create_publisher(const std::string subject_name, const std::string segment_name)
 {
     boost::thread(&Communicator::create_publisher_thread, this, subject_name, segment_name);
 }
 
-void Communicator::create_publisher_thread(const string subject_name, const string segment_name)
+void Communicator::create_publisher_thread(const std::string subject_name, const std::string segment_name)
 {
     std::string topic_name = ns_name + "/" + subject_name + "/" + segment_name;
     std::string key = subject_name + "/" + segment_name;
 
-    string msg = "Creating publisher for segment " + segment_name + " from subject " + subject_name;
-    cout << msg << endl;
+    std::string msg = "Creating publisher for segment " + segment_name + " from subject " + subject_name;
+    std::cout << msg << std::endl;
 
     // create publisher
     boost::mutex::scoped_lock lock(mutex);
@@ -162,7 +175,14 @@ int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<Communicator>();
-    node->connect();
+
+    try {
+        node->connect();
+    } catch (const std::runtime_error& e) {
+        RCLCPP_FATAL(node->get_logger(), "Failed to initialize the node: %s", e.what());
+        rclcpp::shutdown();
+        return 1;
+    }
 
     while (rclcpp::ok()){
         node->get_frame();
