@@ -44,7 +44,6 @@ Clone the \`mocap_msgs\` and \`mocap_vicon_client\` repositories into the \`src\
 
 ```bash
 cd src
-git clone https://github.com/atarbabgei/mocap_msgs.git
 git clone https://github.com/atarbabgei/mocap_vicon_client.git
 ```
 
@@ -54,7 +53,7 @@ Navigate to the root of your workspace and build the packages using \`colcon\`:
 
 ```bash
 cd ~/mocap_ros2_ws
-colcon build --packages-select mocap_vicon_client mocap_msgs
+colcon build --packages-select mocap_vicon_client
 ```
 
 ### Source the Workspace
