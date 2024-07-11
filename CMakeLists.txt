@@ -24,11 +24,11 @@ include_directories(
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
-find_package(mocap_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 add_executable(vicon_client src/mocap_vicon_client/communicator.cpp src/mocap_vicon_client/publisher.cpp)
 target_link_libraries(vicon_client ViconDataStreamSDK_CPP ${Boost_LIBRARIES})
-ament_target_dependencies(vicon_client rclcpp mocap_msgs)
+ament_target_dependencies(vicon_client rclcpp geometry_msgs)
 
 install(TARGETS vicon_client DESTINATION lib/${PROJECT_NAME})
 

@@ -1,8 +1,9 @@
 #ifndef PUBLISHER_HPP
 #define PUBLISHER_HPP
+
 #include <unistd.h>
 #include "rclcpp/rclcpp.hpp"
-#include "mocap_msgs/msg/position.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 
 // Struct used to hold segment data to transmit to the Publisher class.
 struct PositionStruct
@@ -13,15 +14,13 @@ struct PositionStruct
     std::string segment_name;
     std::string translation_type;
     unsigned int frame_number;
-
-} typedef PositionStruct;
-
+};
 
 // Class that allows segment data to be published in a ROS2 topic.
 class Publisher
 {
 private:
-    rclcpp::Publisher<mocap_msgs::msg::Position>::SharedPtr position_publisher_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr position_publisher_;
 
 public:
     bool is_ready = false;
