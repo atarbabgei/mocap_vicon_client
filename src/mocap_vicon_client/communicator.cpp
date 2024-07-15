@@ -115,12 +115,12 @@ void Communicator::get_frame()
             for (size_t i = 0; i < 4; i++)
             {
                 if (i < 3)
-                    current_position.translation[i] = trans.Translation[i];
+                    current_position.translation[i] = trans.Translation[i] / 1000.0; // convert to meters
                 current_position.rotation[i] = rot.Rotation[i];
             }
             current_position.segment_name = segment_name;
             current_position.subject_name = subject_name;
-            current_position.translation_type = "Global";
+            current_position.translation_type = "map";
             current_position.frame_number = frame_number.FrameNumber;
 
             // send position to publisher
