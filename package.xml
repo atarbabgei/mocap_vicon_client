@@ -9,6 +9,7 @@
   
 
   <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <build_depend>rclcpp</build_depend>
 

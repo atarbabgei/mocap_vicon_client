@@ -3,9 +3,11 @@
 
 #include "DataStreamClient.h"
 #include "rclcpp/rclcpp.hpp"
+#include "tf2_ros/transform_broadcaster.h"
 #include "publisher.hpp"
 #include <iostream>
 #include <map>
+#include <memory>
 #include <chrono>
 #include <string>
 #include <unistd.h>
@@ -21,8 +23,10 @@ private:
     string server;
     unsigned int buffer_size;
     string ns_name;
+    string parent_frame_;
     map<string, Publisher> pub_map;
     boost::mutex mutex;
+    std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
 public:
     Communicator();
@@ -33,13 +37,17 @@ public:
     // Stops the current connection to a DataStream server (if any).
     bool disconnect();
 
-    // Main loop that request frames from the currently connected DataStream server and send the 
+    // Main loop that request frames from the currently connected DataStream server and send the
     // received segment data to the Publisher class.
     void get_frame();
 
     // functions to create a segment publisher in a new thread
     void create_publisher(const string subject_name, const string segment_name);
     void create_publisher_thread(const string subject_name, const string segment_name);
+
+    // Replaces characters outside [A-Za-z0-9_] with '_' so the string is a valid tf2 frame id.
+    // tf2 silently rejects invalid frames in RViz, so this is load-bearing for visualization.
+    static std::string sanitize_frame(const std::string& name);
 };
 
 #endif // COMMUNICATOR_HPP

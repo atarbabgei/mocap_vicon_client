@@ -8,6 +8,7 @@ Communicator::Communicator() : Node("vicon")
     this->declare_parameter<std::string>("server");
     this->declare_parameter<int>("buffer_size");
     this->declare_parameter<std::string>("namespace");
+    this->declare_parameter<std::string>("parent_frame", "mocap");
 
     // Check if parameters are set
     if (!this->get_parameter("server", server)) {
@@ -24,6 +25,25 @@ Communicator::Communicator() : Node("vicon")
         RCLCPP_ERROR(this->get_logger(), "Parameter 'namespace' is not set");
         throw std::runtime_error("Parameter 'namespace' is not set");
     }
+
+    parent_frame_ = this->get_parameter("parent_frame").as_string();
+
+    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+}
+
+std::string Communicator::sanitize_frame(const std::string& name)
+{
+    std::string out;
+    out.reserve(name.size());
+    for (char c : name) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            out.push_back(c);
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out;
 }
 
 bool Communicator::connect()
@@ -86,6 +106,19 @@ bool Communicator::disconnect()
 void Communicator::get_frame()
 {
     vicon_client.GetFrame();
+
+    // Vicon-latency-corrected stamp: subtract camera->client pipeline latency from now().
+    // Standard approach used by ethz-asl/vicon_bridge.
+    Output_GetLatencyTotal lat = vicon_client.GetLatencyTotal();
+    rclcpp::Time stamp;
+    if (lat.Result == Result::Success) {
+        stamp = this->now() - rclcpp::Duration::from_seconds(lat.Total);
+    } else {
+        RCLCPP_WARN_ONCE(this->get_logger(),
+            "GetLatencyTotal() failed; falling back to wall clock stamp (no latency correction)");
+        stamp = this->now();
+    }
+
     Output_GetFrameNumber frame_number = vicon_client.GetFrameNumber();
 
     unsigned int subject_count = vicon_client.GetSubjectCount().SubjectCount;
@@ -111,7 +144,7 @@ void Communicator::get_frame()
                 vicon_client.GetSegmentGlobalTranslation(subject_name, segment_name);
             Output_GetSegmentGlobalRotationQuaternion rot =
                 vicon_client.GetSegmentGlobalRotationQuaternion(subject_name, segment_name);
-            
+
             for (size_t i = 0; i < 4; i++)
             {
                 if (i < 3)
@@ -120,8 +153,17 @@ void Communicator::get_frame()
             }
             current_position.segment_name = segment_name;
             current_position.subject_name = subject_name;
-            current_position.translation_type = "map";
+            current_position.translation_type = parent_frame_;
             current_position.frame_number = frame_number.FrameNumber;
+            current_position.stamp = stamp;
+
+            std::string raw_child = subject_name + "_" + segment_name;
+            current_position.child_frame_id = sanitize_frame(raw_child);
+            if (current_position.child_frame_id != raw_child) {
+                RCLCPP_WARN_ONCE(this->get_logger(),
+                    "tf frame name sanitized: '%s' -> '%s' (non-alphanumeric chars replaced with '_')",
+                    raw_child.c_str(), current_position.child_frame_id.c_str());
+            }
 
             // send position to publisher
             boost::mutex::scoped_try_lock lock(mutex);
@@ -165,7 +207,8 @@ void Communicator::create_publisher_thread(const std::string subject_name, const
 
     // create publisher
     boost::mutex::scoped_lock lock(mutex);
-    pub_map.insert(std::map<std::string, Publisher>::value_type(key, Publisher(topic_name, this)));
+    pub_map.insert(std::map<std::string, Publisher>::value_type(
+        key, Publisher(topic_name, this, tf_broadcaster_.get())));
 
     // we don't need the lock anymore, since rest is protected by is_ready
     lock.unlock();
