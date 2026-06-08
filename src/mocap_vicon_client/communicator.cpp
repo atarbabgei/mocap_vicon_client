@@ -8,7 +8,7 @@ Communicator::Communicator() : Node("vicon")
     this->declare_parameter<std::string>("server");
     this->declare_parameter<int>("buffer_size");
     this->declare_parameter<std::string>("namespace");
-    this->declare_parameter<std::string>("parent_frame", "mocap");
+    this->declare_parameter<std::string>("parent_frame", "map");
 
     // Check if parameters are set
     if (!this->get_parameter("server", server)) {
@@ -157,7 +157,24 @@ void Communicator::get_frame()
             current_position.frame_number = frame_number.FrameNumber;
             current_position.stamp = stamp;
 
-            std::string raw_child = subject_name + "_" + segment_name;
+            // Naming convention. The common case is a single-segment rigid body, where the
+            // Vicon segment name duplicates the subject name (e.g. FlapperDrone/FlapperDrone).
+            // For that case we use clean names: topic "<ns>/<subject>", child frame
+            // "<subject>_link". When a subject has more than one segment we fall back to
+            // including the segment so the topics/frames don't collide.
+            std::string topic_name;
+            std::string raw_child;
+            if (segment_count == 1) {
+                topic_name = ns_name + "/" + subject_name;
+                raw_child = subject_name + "_link";
+            } else {
+                topic_name = ns_name + "/" + subject_name + "/" + segment_name;
+                raw_child = subject_name + "_" + segment_name + "_link";
+                RCLCPP_WARN_ONCE(this->get_logger(),
+                    "subject '%s' has %u segments; including segment name in topic/frame to avoid collisions",
+                    subject_name.c_str(), segment_count);
+            }
+
             current_position.child_frame_id = sanitize_frame(raw_child);
             if (current_position.child_frame_id != raw_child) {
                 RCLCPP_WARN_ONCE(this->get_logger(),
@@ -185,21 +202,20 @@ void Communicator::get_frame()
                 {
                     // create publisher if not already available
                     lock.unlock();
-                    create_publisher(subject_name, segment_name);
+                    create_publisher(subject_name, segment_name, topic_name);
                 }
             }
         }
     }
 }
 
-void Communicator::create_publisher(const std::string subject_name, const std::string segment_name)
+void Communicator::create_publisher(const std::string subject_name, const std::string segment_name, const std::string topic_name)
 {
-    boost::thread(&Communicator::create_publisher_thread, this, subject_name, segment_name);
+    boost::thread(&Communicator::create_publisher_thread, this, subject_name, segment_name, topic_name);
 }
 
-void Communicator::create_publisher_thread(const std::string subject_name, const std::string segment_name)
+void Communicator::create_publisher_thread(const std::string subject_name, const std::string segment_name, const std::string topic_name)
 {
-    std::string topic_name = ns_name + "/" + subject_name + "/" + segment_name;
     std::string key = subject_name + "/" + segment_name;
 
     std::string msg = "Creating publisher for segment " + segment_name + " from subject " + subject_name;

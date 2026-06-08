@@ -42,8 +42,8 @@ public:
     void get_frame();
 
     // functions to create a segment publisher in a new thread
-    void create_publisher(const string subject_name, const string segment_name);
-    void create_publisher_thread(const string subject_name, const string segment_name);
+    void create_publisher(const string subject_name, const string segment_name, const string topic_name);
+    void create_publisher_thread(const string subject_name, const string segment_name, const string topic_name);
 
     // Replaces characters outside [A-Za-z0-9_] with '_' so the string is a valid tf2 frame id.
     // tf2 silently rejects invalid frames in RViz, so this is load-bearing for visualization.
