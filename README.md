@@ -75,6 +75,56 @@ Here's an example command to launch the node with the Vicon server at a specific
 ros2 launch mocap_vicon_client client.launch.py server:=192.168.0.100
 ```
 
+### Launch arguments
+
+| Argument            | Default         | Description                                                      |
+|---------------------|-----------------|------------------------------------------------------------------|
+| `server`            | `192.168.0.100` | Vicon server address                                             |
+| `buffer_size`       | `256`           | DataStream client buffer size                                    |
+| `namespace`         | `mocap`         | Topic namespace, e.g. `/mocap/FlapperDrone`                      |
+| `parent_frame`      | `map`           | World-fixed frame; TF parent and `PoseStamped` `header.frame_id` |
+| `publish_parent_tf` | `false`         | Anchor `parent_frame` at the origin on `/tf_static`              |
+
+### TF
+
+For every tracked subject the node broadcasts `parent_frame` → `<subject>_link`, e.g.
+
+```
+map ──► FlapperDrone_link
+```
+
+`parent_frame` defaults to `map`, following [REP-105](https://www.ros.org/reps/rep-0105.html) and
+matching the ENU world frame PX4 expects for external vision. Rename it if it collides with an
+existing `map` in your system:
+
+```bash
+ros2 launch mocap_vicon_client client.launch.py parent_frame:=mocap_init
+```
+
+`parent_frame` is the root of the tree, so it has no transform of its own — with no subject
+tracked, `/tf` is empty and RViz reports *"Fixed Frame [map] does not exist"*. That resolves as
+soon as a subject is visible to Vicon. If you want the frame to exist regardless, set
+`publish_parent_tf:=true`:
+
+```bash
+ros2 launch mocap_vicon_client client.launch.py publish_parent_tf:=true
+```
+
+This starts a `tf2_ros static_transform_publisher` alongside the client that puts `parent_frame`
+at the origin on `/tf_static`:
+
+```
+world ──identity──► map ──live pose──► FlapperDrone_link
+     (/tf_static)       (/tf)
+```
+
+The `world` above it is only there because a TF transform structurally needs both a parent and a
+child — there is no way to say "this frame exists at the origin" with one name. It sits at the
+same place as `parent_frame` (identity), so the two are one origin under two labels, and
+`parent_frame` remains the frame your data is in. That is why `world` is fixed in the launch file
+rather than exposed as an argument. If you need a different anchor name, or a real non-identity
+offset (e.g. arena origin vs. Vicon origin), run your own `static_transform_publisher` instead.
+
 ## Acknowledgements
 
 Special thanks to the contributors and maintainers of the Vicon DataStream SDK and the following projects:

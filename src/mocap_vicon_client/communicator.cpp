@@ -105,17 +105,38 @@ bool Communicator::disconnect()
 
 void Communicator::get_frame()
 {
-    vicon_client.GetFrame();
+    // GetFrame()'s result is load-bearing: if it fails, every subsequent Get*() call returns
+    // Result::NoFrame with stale or zeroed data, which we would otherwise happily publish.
+    Output_GetFrame frame = vicon_client.GetFrame();
+    if (frame.Result != Result::Success) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "GetFrame() failed (Result=%d); skipping frame",
+            static_cast<int>(frame.Result));
+        rclcpp::sleep_for(std::chrono::milliseconds(1)); // don't busy-spin a core on failure
+        return;
+    }
 
     // Vicon-latency-corrected stamp: subtract camera->client pipeline latency from now().
-    // Standard approach used by ethz-asl/vicon_bridge.
+    // Standard approach used by ethz-asl/vicon_bridge. Note that a system reporting no latency
+    // samples is NOT an error -- the SDK returns Success with Total == 0.0 in that case
+    // (see DataStreamClient.h:2217), so the only real failures here are NotConnected/NoFrame.
     Output_GetLatencyTotal lat = vicon_client.GetLatencyTotal();
     rclcpp::Time stamp;
     if (lat.Result == Result::Success) {
         stamp = this->now() - rclcpp::Duration::from_seconds(lat.Total);
+        if (lat.Total == 0.0) {
+            RCLCPP_WARN_ONCE(this->get_logger(),
+                "Vicon reports no latency samples (total 0.0 s); stamps are uncorrected wall clock");
+        } else {
+            RCLCPP_INFO_ONCE(this->get_logger(),
+                "Vicon latency reporting active: %.2f ms total across %u samples",
+                lat.Total * 1000.0, vicon_client.GetLatencySampleCount().Count);
+        }
     } else {
-        RCLCPP_WARN_ONCE(this->get_logger(),
-            "GetLatencyTotal() failed; falling back to wall clock stamp (no latency correction)");
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "GetLatencyTotal() failed (Result=%d); falling back to wall clock stamp "
+            "(no latency correction)",
+            static_cast<int>(lat.Result));
         stamp = this->now();
     }
 
