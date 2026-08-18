@@ -67,12 +67,20 @@ source ~/mocap_ros2_ws/install/setup.bash
 
 ### Launching the Node
 
-You can launch the node using the provided launch file. The parameters such as server address, buffer size, and namespace can be set from the command line.
-
-Here's an example command to launch the node with the Vicon server at a specific IP (e.g. 192.168.0.100):
+You can launch the node using the provided launch file. Parameters such as the server address, buffer size and namespace can be set from the command line:
 
 ```bash
-ros2 launch mocap_vicon_client client.launch.py server:=192.168.0.100
+# pose + TF (server defaults to 192.168.0.100)
+ros2 launch mocap_vicon_client client.launch.py
+
+# a different Vicon server
+ros2 launch mocap_vicon_client client.launch.py server:=192.168.0.10
+
+# also publish derived velocity on <namespace>/<subject>/twist
+ros2 launch mocap_vicon_client client.launch.py publish_velocity:=true
+
+# anchor parent_frame at the origin so it exists in TF with nothing tracked
+ros2 launch mocap_vicon_client client.launch.py publish_parent_tf:=true
 ```
 
 ### Launch arguments
@@ -82,22 +90,6 @@ Declared with their defaults and descriptions in [`launch/client.launch.py`](lau
 ```bash
 ros2 launch mocap_vicon_client client.launch.py --show-args
 ```
-
-### TF
-
-For every tracked subject the node broadcasts `parent_frame` → `<subject>_link`, e.g. `map` →
-`robot_link`. Use `parent_frame:=<name>` if `map` is already taken in your system.
-
-`parent_frame` is the root of the tree, so with no subject tracked `/tf` is empty and RViz
-reports *"Fixed Frame [map] does not exist"*. To anchor it at the origin so it always exists:
-
-```bash
-ros2 launch mocap_vicon_client client.launch.py publish_parent_tf:=true
-```
-
-This starts a `static_transform_publisher` emitting an identity `world` → `parent_frame` on
-`/tf_static`. The `world` name is fixed in the launch file — a transform needs both a parent and
-a child, and it sits at the same place as `parent_frame`.
 
 ## Acknowledgements
 

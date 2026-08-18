@@ -32,14 +32,38 @@ def generate_launch_description():
     declare_parent_frame_arg = DeclareLaunchArgument(
         'parent_frame', default_value='map',
         description='World-fixed frame the Vicon poses are expressed in. Becomes the TF parent '
-                    'of every <subject>_link and the PoseStamped header.frame_id'
+                    'of every <subject>_link (e.g. map -> robot_link) and the PoseStamped '
+                    'header.frame_id. Override it if "map" is already taken in your system'
     )
 
     declare_publish_parent_tf_arg = DeclareLaunchArgument(
         'publish_parent_tf', default_value='false',
-        description="Anchor parent_frame at the origin on /tf_static, so it exists in TF even "
-                    "with no subject tracked. Publishes an identity '"
-                    + ANCHOR_PARENT_FRAME + "' -> parent_frame transform"
+        description="Anchor parent_frame at the origin on /tf_static so it exists in TF even "
+                    "with no subject tracked. parent_frame is the root of the tree, so until "
+                    "something is tracked /tf is empty and RViz reports 'Fixed Frame [map] does "
+                    "not exist'. This publishes an identity '"
+                    + ANCHOR_PARENT_FRAME + "' -> parent_frame transform to fill that in"
+    )
+
+    declare_publish_velocity_arg = DeclareLaunchArgument(
+        'publish_velocity', default_value='false',
+        description='Publish a derived linear velocity as geometry_msgs/TwistStamped on '
+                    '<namespace>/<subject>/twist, in the parent_frame. Off by default: it is '
+                    'differentiated from the pose stream, so it is only as good as the link'
+    )
+
+    declare_velocity_window_arg = DeclareLaunchArgument(
+        'velocity_window', default_value='5',
+        description='Samples in the least-squares slope fit used for velocity. Trades noise '
+                    'against lag: 2 is a plain backward difference, larger is smoother but '
+                    'delayed by (N-1)/2 Vicon frames. Measured on a 200 Hz system: 2 -> ~21 mm/s '
+                    'and no lag, 5 -> ~7 mm/s and +10 ms, 20 -> ~1 mm/s and +48 ms'
+    )
+
+    declare_velocity_max_gap_arg = DeclareLaunchArgument(
+        'velocity_max_gap_frames', default_value='3',
+        description='Discard the velocity history when more than this many Vicon frames go '
+                    'missing, so the fit never spans a dropout'
     )
 
     # Use the launch arguments
@@ -48,6 +72,9 @@ def generate_launch_description():
     topic_namespace = LaunchConfiguration('namespace')
     parent_frame = LaunchConfiguration('parent_frame')
     publish_parent_tf = LaunchConfiguration('publish_parent_tf')
+    publish_velocity = LaunchConfiguration('publish_velocity')
+    velocity_window = LaunchConfiguration('velocity_window')
+    velocity_max_gap_frames = LaunchConfiguration('velocity_max_gap_frames')
 
     return LaunchDescription([
         declare_server_arg,
@@ -55,6 +82,9 @@ def generate_launch_description():
         declare_topic_namespace_arg,
         declare_parent_frame_arg,
         declare_publish_parent_tf_arg,
+        declare_publish_velocity_arg,
+        declare_velocity_window_arg,
+        declare_velocity_max_gap_arg,
         Node(
             package='mocap_vicon_client',
             executable='vicon_client',
@@ -63,7 +93,10 @@ def generate_launch_description():
                 'server': server,
                 'buffer_size': buffer_size,
                 'namespace': topic_namespace,
-                'parent_frame': parent_frame
+                'parent_frame': parent_frame,
+                'publish_velocity': publish_velocity,
+                'velocity_window': velocity_window,
+                'velocity_max_gap_frames': velocity_max_gap_frames
             }]
         ),
         # Optional: make parent_frame exist at the origin even when nothing is tracked.

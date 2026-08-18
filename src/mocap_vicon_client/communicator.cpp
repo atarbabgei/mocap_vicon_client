@@ -2,6 +2,16 @@
 
 using namespace ViconDataStreamSDK::CPP;
 
+namespace {
+// How often to summarise stream health, and the loss fraction worth complaining about. A healthy
+// wired link measures 0.00% loss, so anything above a fraction of a percent is a real signal.
+constexpr double kStreamCheckPeriodSec = 5.0;
+constexpr double kStreamLossWarnPercent = 1.0;
+// A jump larger than this is a stream restart, not dropped frames; counting it as loss would
+// report a nonsense percentage.
+constexpr unsigned int kStreamRestartFrames = 1000;
+}
+
 Communicator::Communicator() : Node("vicon")
 {
     // Declare parameters without default values
@@ -27,6 +37,28 @@ Communicator::Communicator() : Node("vicon")
     }
 
     parent_frame_ = this->get_parameter("parent_frame").as_string();
+
+    // Velocity estimator settings. A window of N samples is a least-squares slope fit whose
+    // noise falls as ~N^-1.5 while its group delay grows as (N-1)/2 frames, so this is the
+    // one knob that trades smoothness against lag. N == 2 is a plain backward difference.
+    this->declare_parameter<bool>("publish_velocity", false);
+    this->declare_parameter<int>("velocity_window", 5);
+    this->declare_parameter<int>("velocity_max_gap_frames", 3);
+
+    velocity_cfg_.enabled = this->get_parameter("publish_velocity").as_bool();
+
+    const int window = static_cast<int>(this->get_parameter("velocity_window").as_int());
+    if (window < 2) {
+        RCLCPP_WARN(this->get_logger(),
+            "velocity_window=%d is below the minimum of 2 (a two-sample fit is already the "
+            "plain backward difference); using 2", window);
+        velocity_cfg_.window = 2;
+    } else {
+        velocity_cfg_.window = static_cast<size_t>(window);
+    }
+
+    const int max_gap = static_cast<int>(this->get_parameter("velocity_max_gap_frames").as_int());
+    velocity_cfg_.max_gap = static_cast<unsigned int>(max_gap < 1 ? 1 : max_gap);
 
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 }
@@ -140,7 +172,77 @@ void Communicator::get_frame()
         stamp = this->now();
     }
 
+    // The Vicon frame counter is the time base for the velocity fit, so we need the rate that
+    // converts it to seconds. GetFrameRate() requires a frame to have been fetched, hence the
+    // lazy query here rather than in connect(). A system that reports no rate leaves this at 0,
+    // and the estimator silently falls back to the (jittery) ROS stamps.
+    if (!frame_rate_known_) {
+        Output_GetFrameRate rate = vicon_client.GetFrameRate();
+        if (rate.Result == Result::Success && rate.FrameRateHz > 0.0) {
+            velocity_cfg_.frame_rate_hz = rate.FrameRateHz;
+            RCLCPP_INFO(this->get_logger(),
+                "Vicon frame rate %.2f Hz (%.4f ms/frame); using the frame counter as the "
+                "velocity time base", rate.FrameRateHz, 1000.0 / rate.FrameRateHz);
+        } else {
+            RCLCPP_WARN(this->get_logger(),
+                "GetFrameRate() unavailable (Result=%d, %.2f Hz); velocity will be timed from "
+                "ROS stamps instead", static_cast<int>(rate.Result), rate.FrameRateHz);
+        }
+        frame_rate_known_ = true;
+    }
+
     Output_GetFrameNumber frame_number = vicon_client.GetFrameNumber();
+
+    // Stream health. The frame counter increments once per Vicon frame regardless of how fast we
+    // poll, so a step greater than 1 is proof that frames went missing between our reads -- much
+    // more direct than inferring it from arrival times, which carry their own jitter. A step of 0
+    // is the same frame served twice (ClientPull re-delivery), which is not loss.
+    if (frame_number.Result == Result::Success) {
+        if (have_stream_frame_) {
+            const unsigned int step = frame_number.FrameNumber - last_stream_frame_;
+            if (step > kStreamRestartFrames) {
+                RCLCPP_WARN(this->get_logger(),
+                    "Vicon frame counter jumped by %u; treating as a stream restart and resetting "
+                    "stream statistics", step);
+                frames_delivered_ = 0;
+                frames_missed_ = 0;
+            } else if (step > 0) {
+                frames_delivered_ += 1;
+                frames_missed_ += (step - 1);
+            }
+        }
+        last_stream_frame_ = frame_number.FrameNumber;
+        have_stream_frame_ = true;
+    }
+
+    const double now_s = this->now().seconds();
+    if (loss_window_start_s_ == 0.0) {
+        loss_window_start_s_ = now_s;
+    } else if (now_s - loss_window_start_s_ >= kStreamCheckPeriodSec) {
+        const double elapsed = now_s - loss_window_start_s_;
+        const unsigned long long expected = frames_delivered_ + frames_missed_;
+        if (expected > 0) {
+            const double loss_pct = 100.0 * static_cast<double>(frames_missed_) /
+                                    static_cast<double>(expected);
+            if (loss_pct >= kStreamLossWarnPercent) {
+                RCLCPP_WARN(this->get_logger(),
+                    "Vicon stream degraded: %.1f Hz delivered vs %.1f Hz expected, %.1f%% of "
+                    "frames lost (%llu of %llu) over the last %.0f s. Check the network link -- a "
+                    "wired connection typically loses none.%s",
+                    static_cast<double>(frames_delivered_) / elapsed,
+                    velocity_cfg_.frame_rate_hz > 0.0
+                        ? velocity_cfg_.frame_rate_hz
+                        : static_cast<double>(expected) / elapsed,
+                    loss_pct, frames_missed_, expected, elapsed,
+                    velocity_cfg_.enabled
+                        ? " Velocity is derived from these frames, so its accuracy suffers too."
+                        : "");
+            }
+        }
+        frames_delivered_ = 0;
+        frames_missed_ = 0;
+        loss_window_start_s_ = now_s;
+    }
 
     unsigned int subject_count = vicon_client.GetSubjectCount().SubjectCount;
 
@@ -166,6 +268,22 @@ void Communicator::get_frame()
             Output_GetSegmentGlobalRotationQuaternion rot =
                 vicon_client.GetSegmentGlobalRotationQuaternion(subject_name, segment_name);
 
+            // An occluded segment is not merely low quality -- Vicon zeroes it. The translation
+            // comes back as [0,0,0] and the quaternion as all zeros, which is not a unit
+            // quaternion at all. Publishing that teleports the subject to the origin and, once
+            // differentiated, yields spikes of >100 m/s on both the entry and the exit of every
+            // dropout. Emit nothing for this segment instead; the gap then trips the velocity
+            // estimator's reset, so the fit never spans the dropout.
+            if (trans.Result != Result::Success || rot.Result != Result::Success ||
+                trans.Occluded || rot.Occluded)
+            {
+                RCLCPP_WARN_ONCE(this->get_logger(),
+                    "segment '%s/%s' is occluded; skipping occluded frames (pose, TF and "
+                    "velocity are simply not published while a segment is not visible)",
+                    subject_name.c_str(), segment_name.c_str());
+                continue;
+            }
+
             for (size_t i = 0; i < 4; i++)
             {
                 if (i < 3)
@@ -180,16 +298,21 @@ void Communicator::get_frame()
 
             // Naming convention. The common case is a single-segment rigid body, where the
             // Vicon segment name duplicates the subject name (e.g. FlapperDrone/FlapperDrone).
-            // For that case we use clean names: topic "<ns>/<subject>", child frame
+            // For that case we use clean names: namespace "<ns>/<subject>", child frame
             // "<subject>_link". When a subject has more than one segment we fall back to
             // including the segment so the topics/frames don't collide.
-            std::string topic_name;
+            //
+            // Note this is a topic *namespace*, never a topic itself -- Publisher hangs
+            // "<base>/pose" and "<base>/twist" underneath it. Publishing the pose directly on
+            // the base would make one topic the parent of another, which is legal in ROS 2 but
+            // renders an ambiguous topic tree.
+            std::string topic_base;
             std::string raw_child;
             if (segment_count == 1) {
-                topic_name = ns_name + "/" + subject_name;
+                topic_base = ns_name + "/" + subject_name;
                 raw_child = subject_name + "_link";
             } else {
-                topic_name = ns_name + "/" + subject_name + "/" + segment_name;
+                topic_base = ns_name + "/" + subject_name + "/" + segment_name;
                 raw_child = subject_name + "_" + segment_name + "_link";
                 RCLCPP_WARN_ONCE(this->get_logger(),
                     "subject '%s' has %u segments; including segment name in topic/frame to avoid collisions",
@@ -223,19 +346,19 @@ void Communicator::get_frame()
                 {
                     // create publisher if not already available
                     lock.unlock();
-                    create_publisher(subject_name, segment_name, topic_name);
+                    create_publisher(subject_name, segment_name, topic_base);
                 }
             }
         }
     }
 }
 
-void Communicator::create_publisher(const std::string subject_name, const std::string segment_name, const std::string topic_name)
+void Communicator::create_publisher(const std::string subject_name, const std::string segment_name, const std::string topic_base)
 {
-    boost::thread(&Communicator::create_publisher_thread, this, subject_name, segment_name, topic_name);
+    boost::thread(&Communicator::create_publisher_thread, this, subject_name, segment_name, topic_base);
 }
 
-void Communicator::create_publisher_thread(const std::string subject_name, const std::string segment_name, const std::string topic_name)
+void Communicator::create_publisher_thread(const std::string subject_name, const std::string segment_name, const std::string topic_base)
 {
     std::string key = subject_name + "/" + segment_name;
 
@@ -245,7 +368,7 @@ void Communicator::create_publisher_thread(const std::string subject_name, const
     // create publisher
     boost::mutex::scoped_lock lock(mutex);
     pub_map.insert(std::map<std::string, Publisher>::value_type(
-        key, Publisher(topic_name, this, tf_broadcaster_.get())));
+        key, Publisher(topic_base, this, tf_broadcaster_.get(), velocity_cfg_)));
 
     // we don't need the lock anymore, since rest is protected by is_ready
     lock.unlock();
